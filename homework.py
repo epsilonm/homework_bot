@@ -103,7 +103,11 @@ def main():
         logging.critical(exc)
         sys.exit()
 
-    bot = telegram.Bot(token=TELEGRAM_TOKEN)
+    try:
+        bot = telegram.Bot(token=TELEGRAM_TOKEN)
+    except TypeError as error:
+        logging.critical(error)
+        sys.exit()
     current_timestamp = int(time.time())
 
     while True:
