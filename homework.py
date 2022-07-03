@@ -18,6 +18,11 @@ PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
+ENV_VARS = {'PRACTICUM_TOKEN': PRACTICUM_TOKEN,
+                         'TELEGRAM_TOKEN': TELEGRAM_TOKEN,
+                         'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID
+                         }
+
 RETRY_TIME = 600
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
@@ -107,9 +112,7 @@ def check_tokens():
     """Check existing of environmental tokens.
     If some of them does not exist return False, else True.
     """
-    return all((PRACTICUM_TOKEN,
-                TELEGRAM_TOKEN,
-                TELEGRAM_CHAT_ID))
+    return all(ENV_VARS.values())
 
 
 def main():
@@ -119,8 +122,10 @@ def main():
     if check_tokens():
         logger.debug('All tokens are available!')
     else:
-        logger.critical('Environment variable is not found!'
-                        ' Program will be closed!')
+        missing = [key for key, value in ENV_VARS.items() if value is None]
+        logger.critical(f'Environment variable is not found! '
+                        f'Program will be closed! '
+                        f'Missing variables: {missing}')
         sys.exit(1)
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
