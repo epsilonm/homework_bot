@@ -112,7 +112,9 @@ def check_tokens():
     """Check existing of environmental tokens.
     If some of them does not exist return False, else True.
     """
-    return all(ENV_VARS.values())
+    return all((PRACTICUM_TOKEN,
+                TELEGRAM_TOKEN,
+                TELEGRAM_CHAT_ID,))
 
 
 def main():
@@ -124,7 +126,7 @@ def main():
     else:
         missing = [key for key, value in ENV_VARS.items() if value is None]
         logger.critical(f'Environment variable is not found! '
-                        f'Program will be closed! '
+                        f'Program will be terminated! '
                         f'Missing variables: {missing}')
         sys.exit(1)
 
