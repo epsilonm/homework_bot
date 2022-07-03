@@ -153,7 +153,7 @@ def main():
             message = f'Program failure: {error}'
             send_message(bot, message)
         except Exception as error:
-            logger.error(error)
+            logger.exception(error)
             message = f'Unexpected program failure: {error}'
             send_message(bot, message)
 
