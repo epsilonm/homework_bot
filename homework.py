@@ -2,16 +2,15 @@ import os
 import sys
 import time
 import logging
+import http
 
 import requests
 import telegram
 from dotenv import load_dotenv
 
-from exceptions import (EnvironmentVariableNotFoundError,
-                        ApiAnswerIsNotOkError,
-                        HomeworkNameDoesNotExistError,
-                        HomeworkStatusDoesNotExistError,
-                        HomeworkStatusIsUndefinedError)
+from exceptions import (ApiAnswerIsNotOkError,
+                        HomeworkStatusIsUndefinedError,
+                        MessageHasNotSentError)
 
 
 load_dotenv()
@@ -30,21 +29,46 @@ HOMEWORK_STATUSES = {
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
 }
 
+RESPONSE_KEYS = ('homeworks', 'current_date',)
+
+HOMEWORK_KEYS = ('id', 'status', 'homework_name', 'reviewer_comment',
+                 'date_updated', 'lesson_name',)
+
 
 def send_message(bot, message):
     """Send message to telegram chat."""
-    bot.send_message(TELEGRAM_CHAT_ID, message)
+    try:
+        bot.send_message(TELEGRAM_CHAT_ID, message)
+        logging.info(f'Message {message} was sent.')
+    except MessageHasNotSentError:
+        raise MessageHasNotSentError(f'{message}')
 
 
 def get_api_answer(current_timestamp):
     """Make request to API`s endpoint. If success returns API response."""
-    timestamp = current_timestamp or int(time.time())
-    params = {'from_date': timestamp}
-    headers = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
-    homework_statuses = requests.get(ENDPOINT, headers=headers, params=params)
-    if homework_statuses.status_code != 200:
-        raise ApiAnswerIsNotOkError()
-    return homework_statuses.json()
+    request_parameters = {
+        'params': {'from_date': current_timestamp},
+        'url': ENDPOINT,
+        'headers': {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
+    }
+    try:
+        homeworks = requests.get(**request_parameters)
+    except ConnectionError:
+        raise ConnectionError
+    if homeworks.status_code != http.HTTPStatus.OK:
+        raise requests.exceptions.HTTPError(
+            f'API is not available, status code: '
+            f'{homeworks.status_code}, '
+            f'{homeworks.reason},'
+        )
+    try:
+        homeworks = homeworks.json()
+    except requests.exceptions.InvalidJSONError:
+        raise requests.exceptions.InvalidJSONError(
+            'Response contains invalid JSON'
+        )
+    logging.info('Response has been successfully required!')
+    return homeworks
 
 
 def check_response(response):
@@ -53,23 +77,24 @@ def check_response(response):
     """
     if not isinstance(response, dict):
         raise TypeError('Response must be dictionary!')
-    if len(response) == 0:
-        raise ValueError('Response must not be empty!')
-    homework = response['homeworks']
-    if type(homework) != list:
+    for key in RESPONSE_KEYS:
+        if key not in response.keys():
+            raise KeyError(f'Key {key} is not found.')
+    homeworks = response['homeworks']
+    if not isinstance(homeworks, list):
         raise TypeError('Homeworks must be in a list!')
-    return homework
+    logging.info('Response has been successfully checked!')
+    return homeworks
 
 
 def parse_status(homework):
     """Extract from information about concrete homework it`s status.
     If extraction was successful, return string with homework verdict.
     """
-    if not homework['homework_name']:
-        raise HomeworkNameDoesNotExistError
+    for key in HOMEWORK_KEYS:
+        if homework.get(key) is None:
+            raise KeyError(f'Key {key} is not found.')
     homework_name = homework['homework_name']
-    if not homework['status']:
-        raise HomeworkStatusDoesNotExistError()
     if homework['status'] not in HOMEWORK_STATUSES.keys():
         raise HomeworkStatusIsUndefinedError()
     homework_status = homework['status']
@@ -89,53 +114,55 @@ def check_tokens():
 
 def main():
     """Main bot logic."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s, %(levelname)s, %(message)s',
-    )
     logger = logging.getLogger(__name__)
-    logger.addHandler(sys.stdout)
 
-    try:
-        check_tokens()
-        logging.info('All tokens are available!')
-    except EnvironmentVariableNotFoundError() as exc:
-        logging.critical(exc)
-        sys.exit()
+    if check_tokens():
+        logger.debug('All tokens are available!')
+    else:
+        logger.critical('Environment variable is not found!'
+                        ' Program will be closed!')
+        sys.exit(1)
 
-    try:
-        bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    except TypeError as error:
-        logging.critical(error)
-        sys.exit()
+    bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
 
     while True:
         try:
             response = get_api_answer(current_timestamp)
-            logging.info('Response has been successfully required!')
-            current_timestamp = int(time.time())
+            current_timestamp = response['current_date']
             homeworks = check_response(response)
-            logging.info('Response has been successfully checked!')
-            for homework in homeworks:
-                send_message(bot, parse_status(homework))
-                logging.info('Homework status is changed!')
+            if len(homeworks) != 0:
+                send_message(bot, parse_status(homeworks[0]))
+                logger.info('Homework status is changed!')
+            else:
+                logger.info('Homework status was not changed!')
 
-            time.sleep(RETRY_TIME)
         except (ApiAnswerIsNotOkError, TypeError, ValueError,
-                HomeworkNameDoesNotExistError,
-                HomeworkStatusDoesNotExistError,
                 HomeworkStatusIsUndefinedError,
-                KeyError) as error:
-            logging.error(error)
-            send_message(bot, error)
-        except Exception as error:
-            logging.error(error)
-            message = f'Сбой в работе программы: {error}'
+                KeyError,
+                ConnectionError,
+                requests.exceptions.HTTPError,
+                requests.exceptions.InvalidJSONError,
+                ) as error:
+            logger.exception(error)
+            message = f'Program failure: {error}'
             send_message(bot, message)
-            logging.info(f'Message {message} was sent.')
+        except Exception as error:
+            logger.error(error)
+            message = f'Unexpected program failure: {error}'
+            send_message(bot, message)
+
+        finally:
             time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format=('%(asctime)s, %(levelname)s, '
+                ' %(message)s, '
+                'in function: %(funcName)s, '
+                'line: %(lineno)d'),
+        handlers=(logging.StreamHandler(stream=sys.stdout),)
+    )
     main()
