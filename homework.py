@@ -10,7 +10,11 @@ from dotenv import load_dotenv
 
 from exceptions import (ApiAnswerIsNotOkError,
                         HomeworkStatusIsUndefinedError,
-                        MessageHasNotSentError)
+                        MessageHasNotSentError,
+                        WrongStatusCodeError,
+                        JSONDecodeProblemError,
+                        ResponseCurrentDateNotFoundError,
+                        )
 
 
 load_dotenv()
@@ -28,51 +32,51 @@ ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
 
-HOMEWORK_STATUSES = {
+HOMEWORK_VERDICTS = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
     'reviewing': 'Работа взята на проверку ревьюером.',
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
 }
-
-RESPONSE_KEYS = ('homeworks', 'current_date',)
-
-HOMEWORK_KEYS = ('id', 'status', 'homework_name', 'reviewer_comment',
-                 'date_updated', 'lesson_name',)
 
 
 def send_message(bot, message):
     """Send message to telegram chat."""
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
-        logging.info(f'Message {message} was sent.')
-    except MessageHasNotSentError:
+    except telegram.error.TelegramError:
         raise MessageHasNotSentError(f'{message}')
+    else:
+        logging.info(f'Message {message} was sent.')
 
 
 def get_api_answer(current_timestamp):
     """Make request to API`s endpoint. If success returns API response."""
-    request_parameters = {
+    request_params = {
         'params': {'from_date': current_timestamp},
         'url': ENDPOINT,
         'headers': {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
     }
+    exception_params_message = f'Request parameters: \n'\
+                               f'timestamp =>'\
+                               f'{request_params["params"]["from_date"]}\n'\
+                               f'URL => {request_params["url"]}\n'\
+                               f'headers => {request_params["headers"]}'
     try:
-        homeworks = requests.get(**request_parameters)
-    except ConnectionError:
-        raise ConnectionError
+        homeworks = requests.get(**request_params)
+    except requests.exceptions.RequestException:
+        raise ConnectionError(exception_params_message)
     if homeworks.status_code != http.HTTPStatus.OK:
-        raise requests.exceptions.HTTPError(
+        raise WrongStatusCodeError(
             f'API is not available, status code: '
             f'{homeworks.status_code}, '
-            f'{homeworks.reason},'
+            f'{homeworks.reason}, {exception_params_message}'
         )
     try:
         homeworks = homeworks.json()
-    except requests.exceptions.InvalidJSONError:
-        raise requests.exceptions.InvalidJSONError(
-            'Response contains invalid JSON'
-        )
-    logging.info('Response has been successfully required!')
+    except requests.exceptions.JSONDecodeError:
+        raise JSONDecodeProblemError
+    else:
+        logging.info('Response has been successfully required!')
     return homeworks
 
 
@@ -82,9 +86,10 @@ def check_response(response):
     """
     if not isinstance(response, dict):
         raise TypeError('Response must be dictionary!')
-    for key in RESPONSE_KEYS:
-        if key not in response.keys():
-            raise KeyError(f'Key {key} is not found.')
+    if response.get('homeworks') is None:
+        raise KeyError("Key 'homeworks' is not found.")
+    if response.get('current_date') is None:
+        raise ResponseCurrentDateNotFoundError
     homeworks = response['homeworks']
     if not isinstance(homeworks, list):
         raise TypeError('Homeworks must be in a list!')
@@ -96,14 +101,13 @@ def parse_status(homework):
     """Extract from information about concrete homework it`s status.
     If extraction was successful, return string with homework verdict.
     """
-    for key in HOMEWORK_KEYS:
-        if homework.get(key) is None:
-            raise KeyError(f'Key {key} is not found.')
+    if homework.get('homework_name') is None:
+        raise KeyError("The key is not found => 'homework_key'")
     homework_name = homework['homework_name']
-    if homework['status'] not in HOMEWORK_STATUSES.keys():
-        raise HomeworkStatusIsUndefinedError()
+    if homework.get('status') is None:
+        raise KeyError("The key is not found => 'status'")
     homework_status = homework['status']
-    verdict = HOMEWORK_STATUSES[homework_status]
+    verdict = HOMEWORK_VERDICTS[homework_status]
 
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
@@ -136,8 +140,8 @@ def main():
     while True:
         try:
             response = get_api_answer(current_timestamp)
-            current_timestamp = response['current_date']
             homeworks = check_response(response)
+            current_timestamp = response['current_date']
             if len(homeworks) != 0:
                 send_message(bot, parse_status(homeworks[0]))
                 logger.info('Homework status is changed!')
@@ -148,16 +152,14 @@ def main():
                 HomeworkStatusIsUndefinedError,
                 KeyError,
                 ConnectionError,
-                requests.exceptions.HTTPError,
-                requests.exceptions.InvalidJSONError,
+                WrongStatusCodeError,
+                JSONDecodeProblemError,
                 ) as error:
             logger.exception(error)
             message = f'Program failure: {error}'
             send_message(bot, message)
-        except Exception as error:
+        except ResponseCurrentDateNotFoundError as error:
             logger.exception(error)
-            message = f'Unexpected program failure: {error}'
-            send_message(bot, message)
 
         finally:
             time.sleep(RETRY_TIME)
