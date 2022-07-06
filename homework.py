@@ -8,9 +8,7 @@ import requests
 import telegram
 from dotenv import load_dotenv
 
-from exceptions import (ApiAnswerIsNotOkError,
-                        HomeworkStatusIsUndefinedError,
-                        MessageHasNotSentError,
+from exceptions import (MessageHasNotSentError,
                         WrongStatusCodeError,
                         JSONDecodeProblemError,
                         ResponseCurrentDateNotFoundError,
@@ -56,11 +54,11 @@ def get_api_answer(current_timestamp):
         'url': ENDPOINT,
         'headers': {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
     }
-    exception_params_message = f'Request parameters: \n'\
-                               f'timestamp =>'\
-                               f'{request_params["params"]["from_date"]}\n'\
-                               f'URL => {request_params["url"]}\n'\
-                               f'headers => {request_params["headers"]}'
+    exception_params_message = (f'Request parameters: \n'
+                                f'timestamp =>'
+                                f'{request_params["params"]["from_date"]}\n'
+                                f'URL => {request_params["url"]}\n'
+                                f'headers => {request_params["headers"]}')
     try:
         homeworks = requests.get(**request_params)
     except requests.exceptions.RequestException:
@@ -147,20 +145,12 @@ def main():
                 logger.info('Homework status is changed!')
             else:
                 logger.info('Homework status was not changed!')
-
-        except (ApiAnswerIsNotOkError, TypeError, ValueError,
-                HomeworkStatusIsUndefinedError,
-                KeyError,
-                ConnectionError,
-                WrongStatusCodeError,
-                JSONDecodeProblemError,
-                ) as error:
+        except ResponseCurrentDateNotFoundError as error:
+            logger.exception(error)
+        except Exception as error:
             logger.exception(error)
             message = f'Program failure: {error}'
             send_message(bot, message)
-        except ResponseCurrentDateNotFoundError as error:
-            logger.exception(error)
-
         finally:
             time.sleep(RETRY_TIME)
 
