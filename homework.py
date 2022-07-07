@@ -12,6 +12,7 @@ from exceptions import (MessageHasNotSentError,
                         WrongStatusCodeError,
                         JSONDecodeProblemError,
                         ResponseCurrentDateNotFoundError,
+                        OnlyForLogError,
                         )
 
 
@@ -145,7 +146,7 @@ def main():
                 logger.info('Homework status is changed!')
             else:
                 logger.info('Homework status was not changed!')
-        except ResponseCurrentDateNotFoundError as error:
+        except OnlyForLogError as error:
             logger.exception(error)
         except Exception as error:
             logger.exception(error)
